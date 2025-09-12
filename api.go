@@ -1,9 +1,14 @@
 package api
 
 import (
+	"database/sql"
+	"database/sql/driver"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tursodatabase/libsql-client-go/libsql"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // album represents data about a record album.
@@ -14,11 +19,65 @@ type album struct {
 	Price  float64 `json:"price"`
 }
 
-// albums slice to seed record album data.
-var albums = []album{
-	{ID: "1", Title: "Blue Train", Artist: "John Coltrane", Price: 56.99},
-	{ID: "2", Title: "Jeru", Artist: "Gerry Mulligan", Price: 17.99},
-	{ID: "3", Title: "Sarah Vaughan and Clifford Brown", Artist: "Sarah Vaughan", Price: 39.99},
+var db *sql.DB
+
+func initDB() error {
+	dbUrl := os.Getenv("TURSO_DATABASE_URL")
+	if dbUrl == "" {
+		dbUrl = "file:./albums.db"
+	}
+	
+	authToken := os.Getenv("TURSO_AUTH_TOKEN")
+	
+	var connector driver.Connector
+	var err error
+	if authToken != "" {
+		connector, err = libsql.NewConnector(dbUrl, libsql.WithAuthToken(authToken))
+	} else {
+		connector, err = libsql.NewConnector(dbUrl)
+	}
+	if err != nil {
+		return err
+	}
+
+	db = sql.OpenDB(connector)
+
+	createTableSQL := `CREATE TABLE IF NOT EXISTS albums (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL,
+		artist TEXT NOT NULL,
+		price REAL NOT NULL
+	);`
+
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
+		return err
+	}
+
+	// Check if table is empty and seed with initial data
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM albums").Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		seedData := []album{
+			{ID: "1", Title: "Blue Train", Artist: "John Coltrane", Price: 56.99},
+			{ID: "2", Title: "Jeru", Artist: "Gerry Mulligan", Price: 17.99},
+			{ID: "3", Title: "Sarah Vaughan and Clifford Brown", Artist: "Sarah Vaughan", Price: 39.99},
+		}
+
+		for _, a := range seedData {
+			_, err = db.Exec("INSERT INTO albums (id, title, artist, price) VALUES (?, ?, ?, ?)",
+				a.ID, a.Title, a.Artist, a.Price)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // setupRouter configures and returns the Gin router with all routes
@@ -32,12 +91,35 @@ func setupRouter() *gin.Engine {
 }
 
 func main() {
+	if err := initDB(); err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
 	router := setupRouter()
 	router.Run("localhost:8080")
 }
 
 // getAlbums responds with the list of all albums as JSON.
 func getAlbums(c *gin.Context) {
+	rows, err := db.Query("SELECT id, title, artist, price FROM albums")
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var albums []album
+	for rows.Next() {
+		var a album
+		err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Price)
+		if err != nil {
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		albums = append(albums, a)
+	}
+
 	c.IndentedJSON(http.StatusOK, albums)
 }
 
@@ -51,8 +133,14 @@ func postAlbums(c *gin.Context) {
 		return
 	}
 
-	// Add the new album to the slice.
-	albums = append(albums, newAlbum)
+	// Insert the new album into the database.
+	_, err := db.Exec("INSERT INTO albums (id, title, artist, price) VALUES (?, ?, ?, ?)",
+		newAlbum.ID, newAlbum.Title, newAlbum.Artist, newAlbum.Price)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	c.IndentedJSON(http.StatusCreated, newAlbum)
 }
 
@@ -61,13 +149,17 @@ func postAlbums(c *gin.Context) {
 func getAlbumByID(c *gin.Context) {
 	id := c.Param("id")
 
-	// Loop through the list of albums, looking for
-	// an album whose ID value matches the parameter.
-	for _, a := range albums {
-		if a.ID == id {
-			c.IndentedJSON(http.StatusOK, a)
-			return
-		}
+	var a album
+	err := db.QueryRow("SELECT id, title, artist, price FROM albums WHERE id = ?", id).
+		Scan(&a.ID, &a.Title, &a.Artist, &a.Price)
+
+	if err == sql.ErrNoRows {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+		return
+	} else if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+
+	c.IndentedJSON(http.StatusOK, a)
 }
