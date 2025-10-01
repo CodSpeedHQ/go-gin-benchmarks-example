@@ -25,7 +25,6 @@ func BenchmarkGetAlbumByIDNotFound(b *testing.B) {
 
 func BenchmarkPostAlbumsValid(b *testing.B) {
 	newAlbum := album{
-		ID:     "4",
 		Title:  "Kind of Blue",
 		Artist: "Miles Davis",
 		Price:  29.99,
@@ -37,7 +36,7 @@ func BenchmarkPostAlbumsValid(b *testing.B) {
 }
 
 func BenchmarkPostAlbumsInvalidJSON(b *testing.B) {
-	invalidJSON := `{"id": "5", "title": "Invalid Album", "artist": "Test Artist", "price": "invalid_price"}`
+	invalidJSON := `{"title": "Invalid Album", "artist": "Test Artist", "price": "invalid_price"}`
 	req, _ := http.NewRequest("POST", "/albums", strings.NewReader(invalidJSON))
 	req.Header.Set("Content-Type", "application/json")
 	benchmarkRequest(b, req)

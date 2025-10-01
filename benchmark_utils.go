@@ -31,6 +31,14 @@ func setupBenchmarkRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	// Discard all output during benchmarks to only preserve benchmark output
 	gin.DefaultWriter = io.Discard
+
+	// Initialize database if not already initialized
+	if db == nil {
+		if err := initDB(); err != nil {
+			panic(err)
+		}
+	}
+
 	return setupRouter()
 }
 
