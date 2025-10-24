@@ -21,3 +21,4 @@ jobs:
         with:
           mode: walltime
           run: go test -bench=. -benchtime=5s
+          upload-url: https://api.staging.preview.codspeed.io/upload
